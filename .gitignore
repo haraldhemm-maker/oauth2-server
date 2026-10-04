@@ -1,0 +1,5 @@
+_.htaccess
+.settings/*
+.buildpath
+.directory
+.project
