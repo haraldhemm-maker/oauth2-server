@@ -26,15 +26,17 @@
  *  cd ~/public_html/app/oauth2-server/
  *  php -S localhost:8000
  * Browser (Anmeldeformular anzeigen):
- *  http://localhost:8000/index.php?action=authorize&response_type=code&client_id=demo-app&redirect_uri=http://localhost:3000/callback&state=xyz123&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URrbu3JyHTYKf4&code_challenge_method=S256
- *  http://localhost:8000/index.php?response_type=code&client_id=demo-app&redirect_uri=http://localhost:3000/callback&state=xyz123&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URrbu3JyHTYKf4&code_challenge_method=S256
+ *  http://localhost:8000/index.php?action=authorize&response_type=code&client_id=web-app&redirect_uri=http://localhost/~harald/app/web-app/php/callback.php&state=xyz123&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URrbu3JyHTYKf4&code_challenge_method=S256
+ *  http://localhost:8000/index.php?response_type=code&client_id=web-app&redirect_uri=http://localhost/~harald/app/web-app/php/callback.php&state=xyz123&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URrbu3JyHTYKf4&code_challenge_method=S256
  */
 
 declare(strict_types=1);
 
+
 if (!defined('DS')) {
     define('DS', DIRECTORY_SEPARATOR);
 }
+
 
 session_start();
 
@@ -72,20 +74,24 @@ function json_response(array $data, int $status = 200): never
     exit;
 }
 
+
 function oauth_error(string $error, string $desc, int $status = 400): never
 {
     json_response(['error' => $error, 'error_description' => $desc], $status);
 }
+
 
 function random_token(): string
 {
     return bin2hex(random_bytes(32));
 }
 
+
 function hash_token(string $token): string
 {
     return hash('sha256', $token);
 }
+
 
 function client_from_request(): ?array
 {
@@ -108,6 +114,7 @@ function client_from_request(): ?array
     }
     return $client;
 }
+
 
 /* ---------------------------------------------------------
  * Token-Ausstellung
@@ -155,6 +162,7 @@ function issue_tokens(string $clientId, ?int $userId, string $scope): array
     ];
 }
 
+
 /* =========================================================
  * GET /authorize
  * ========================================================= */
@@ -201,17 +209,12 @@ function handle_authorize_request(): void
         'challenge_method' => $method,
     ];
 
-    // Sehr einfaches Login-Formular (in Produktion durch echtes Login ersetzen)
-    header('Content-Type: text/html; charset=utf-8');
-    echo '<!doctype html><html lang="de"><meta charset="utf-8"><title>Anmeldung</title>
-    <h1>Anmeldung bei "' . htmlspecialchars($client['client_name']) . '"</h1>
-    <form method="post" action="?action=authorize">
-      <p><input name="username" placeholder="Benutzername" required></p>
-      <p><input name="password" type="password" placeholder="Passwort" required></p>
-      <button type="submit">Anmelden &amp; Autorisieren</button>
-    </form>';
+    // Login-Formular ausgelagert: php/inc/login-form.inc.php
+    $clientName = $client['client_name'];
+    include 'php' . DS . 'inc' . DS . 'login-form.inc.php';
     exit;
 }
+
 
 /* =========================================================
  * POST /authorize (Login + Consent -> Code-Ausstellung)
@@ -262,6 +265,7 @@ function handle_authorize_submit(): void
     exit;
 }
 
+
 /* =========================================================
  * POST /token
  * ========================================================= */
@@ -286,6 +290,7 @@ function handle_token_request(): void
             oauth_error('unsupported_grant_type', 'Unbekannter grant_type.');
     }
 }
+
 
 function grant_authorization_code(): never
 {
@@ -346,6 +351,7 @@ function grant_authorization_code(): never
     json_response(issue_tokens($client['client_id'], (int)$authCode['user_id'], $authCode['scope']));
 }
 
+
 function grant_refresh_token(): never
 {
     $client = client_from_request();
@@ -372,6 +378,7 @@ function grant_refresh_token(): never
     json_response(issue_tokens($rt['client_id'], $rt['user_id'] !== null ? (int)$rt['user_id'] : null, $rt['scope']));
 }
 
+
 function grant_client_credentials(): never
 {
     $client = client_from_request();
@@ -387,6 +394,7 @@ function grant_client_credentials(): never
     unset($tokens['refresh_token']); // Client-Credentials: kein Refresh Token
     json_response($tokens);
 }
+
 
 /* =========================================================
  * POST /introspect (RFC 7662) - für Resource Server
@@ -412,6 +420,7 @@ function handle_introspect(): void
         'exp'       => (new DateTimeImmutable($tok['expires_at']))->getTimestamp(),
     ]);
 }
+
 
 /* =========================================================
  * Routing
