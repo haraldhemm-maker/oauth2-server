@@ -3,3 +3,4 @@ _.htaccess
 .buildpath
 .directory
 .project
+tmp/sessions/*

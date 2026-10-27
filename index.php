@@ -38,6 +38,8 @@ if (!defined('DS')) {
 }
 
 
+// Authorization Server (php -S, läuft als harald)
+ini_set('session.save_path', '/home/harald/public_html/app/oauth2-server/tmp/sessions');
 session_start();
 
 
@@ -423,6 +425,105 @@ function handle_introspect(): void
 
 
 /* =========================================================
+ * GET /register - Registrierungsformular anzeigen
+ * ========================================================= */
+function handle_register_request(): void
+{
+    // Autorisierungsparameter (falls vorhanden) mitnehmen, damit der
+    // Nutzer nach der Registrierung zum ursprünglichen Login zurückkehren kann
+    $authorizeQuery = '';
+    if (isset($_SESSION['oauth2'])) {
+        $authorizeQuery = http_build_query([
+            'response_type'         => 'code',
+            'client_id'             => $_SESSION['oauth2']['client_id'],
+            'redirect_uri'          => $_SESSION['oauth2']['redirect_uri'],
+            'scope'                 => $_SESSION['oauth2']['scope'],
+            'state'                 => $_SESSION['oauth2']['state'],
+            'code_challenge'        => $_SESSION['oauth2']['code_challenge'],
+            'code_challenge_method' => $_SESSION['oauth2']['challenge_method'],
+        ]);
+    }
+
+    $registerError = '';   // validiert das Template als eingebunden
+    $registerOld    = ['username' => '', 'authorize_query' => $authorizeQuery];
+    include 'php' . DS . 'inc' . DS . 'register-form.inc.php';
+    exit;
+}
+
+
+/* =========================================================
+ * POST /register - Benutzer anlegen
+ * ========================================================= */
+function handle_register_submit(): void
+{
+    global $globConfig;
+
+    $username           = trim($_POST['username'] ?? '');
+    $password           = $_POST['password'] ?? '';
+    $passwordConfirm    = $_POST['password_confirm'] ?? '';
+
+    $authorizeQuery = '';
+    if (isset($_SESSION['oauth2'])) {
+        $authorizeQuery = http_build_query([
+            'response_type'         => 'code',
+            'client_id'             => $_SESSION['oauth2']['client_id'],
+            'redirect_uri'          => $_SESSION['oauth2']['redirect_uri'],
+            'scope'                 => $_SESSION['oauth2']['scope'],
+            'state'                 => $_SESSION['oauth2']['state'],
+            'code_challenge'        => $_SESSION['oauth2']['code_challenge'],
+            'code_challenge_method' => $_SESSION['oauth2']['challenge_method'],
+        ]);
+    }
+
+    // Validierung
+    $error = '';
+    if ($username === '' || mb_strlen($username) < 3 || mb_strlen($username) > 64) {
+        $error = 'Der Benutzername muss 3 bis 64 Zeichen lang sein.';
+    } elseif (!preg_match('/^[A-Za-z0-9_.-]+$/', $username)) {
+        $error = 'Der Benutzername darf nur Buchstaben, Zahlen sowie . _ - enthalten.';
+    } elseif ($password === '' || strlen($password) < 8) {
+        $error = 'Das Passwort muss mindestens 8 Zeichen lang sein.';
+    } elseif ($password !== $passwordConfirm) {
+        $error = 'Die Passwörter stimmen nicht überein.';
+    } else {
+        // Benutzername bereits vergeben?
+        $stmt = db()->prepare('SELECT id FROM oauth_users WHERE username = ?');
+        $stmt->execute([$username]);
+        if ($stmt->fetch()) {
+            $error = 'Dieser Benutzername ist bereits vergeben.';
+        }
+    }
+
+    if ($error !== '') {
+        // Formular mit Fehlermeldung erneut anzeigen
+        $registerError = $error;
+        $registerOld    = [
+            'username'         => $username,
+            'authorize_query'  => $authorizeQuery,
+        ];
+        include 'php' . DS . 'inc' . DS . 'register-form.inc.php';
+        exit;
+    }
+
+    // Benutzer anlegen (Passwort nur als Hash speichern)
+    $stmt = db()->prepare(
+        'INSERT INTO oauth_users (username, password_hash) VALUES (?, ?)'
+    );
+    $stmt->execute([$username, password_hash($password, PASSWORD_DEFAULT)]);
+
+    // Erfolgsmeldung + Weiterleitung zum Login
+    http_response_code(201);
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!doctype html><html lang="de"><meta charset="utf-8"><title>Registrierung</title>'
+        . '<body><h1>Registrierung erfolgreich</h1>'
+        . '<p>Der Benutzer <strong>' . htmlspecialchars($username) . '</strong> wurde angelegt.</p>'
+        . '<p><a href="?action=authorize' . ($authorizeQuery !== '' ? '&' . $authorizeQuery : '')
+        . '">Jetzt anmelden</a></p></body></html>';
+    exit;
+}
+
+
+/* =========================================================
  * Routing
  * ========================================================= */
 $action = $_GET['action'] ?? 'authorize';
@@ -440,6 +541,13 @@ switch ($action) {
         break;
     case 'introspect':
         handle_introspect();
+        break;
+    case 'register':
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
+            handle_register_request();
+        } else {
+            handle_register_submit();
+        }
         break;
     default:
         oauth_error('invalid_request', 'Unbekannter Endpunkt.', 404);
