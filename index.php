@@ -219,6 +219,35 @@ function handle_authorize_request(): void
 
 
 /* =========================================================
+ * GET /logout - Session beim AS beenden
+ * ========================================================= */
+function handle_logout(): void
+{
+    $redirect = $_GET['post_logout_redirect_uri'] ?? '';
+    session_start();
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $p = session_get_cookie_params();
+        setcookie(session_name(), '', time() - 42000,
+            $p['path'], $p['domain'], $p['secure'], $p['httponly']);
+    }
+    session_destroy();
+
+    // Nur zu *registrierten* URIs weiterleiten!
+    if ($redirect !== '') {
+        $stmt = db()->prepare('SELECT redirect_uri FROM oauth_clients WHERE redirect_uri = ?');
+        $stmt->execute([$redirect]);
+        if ($stmt->fetch()) {
+            header('Location: ' . $redirect);
+            exit;
+        }
+    }
+    echo '<p>Abmeldung erfolgreich.</p>';
+    exit;
+}
+
+
+/* =========================================================
  * POST /authorize (Login + Consent -> Code-Ausstellung)
  * ========================================================= */
 function handle_authorize_submit(): void
@@ -265,6 +294,27 @@ function handle_authorize_submit(): void
     ]);
     header('Location: ' . $sess['redirect_uri'] . (str_contains($sess['redirect_uri'], '?') ? '&' : '?') . $params);
     exit;
+}
+
+
+/* =========================================================
+ * POST /revoke (RFC 7009)
+ * ========================================================= */
+function handle_revoke(): void
+{
+    $client = client_from_request();
+    if (!$client) {
+        oauth_error('invalid_client', 'Client-Authentifizierung fehlgeschlagen.', 401);
+    }
+    $token = $_POST['token'] ?? '';
+    $hash  = hash_token($token);
+
+    // RFC 7009: unbekanntes Token ist KEIN Fehler → immer 200
+    db()->prepare('UPDATE oauth_access_tokens  SET revoked = 1 WHERE token = ? AND client_id = ?')
+        ->execute([$hash, $client['client_id']]);
+    db()->prepare('UPDATE oauth_refresh_tokens SET revoked = 1 WHERE token = ? AND client_id = ?')
+        ->execute([$hash, $client['client_id']]);
+    json_response([]);
 }
 
 
@@ -548,6 +598,15 @@ switch ($action) {
         } else {
             handle_register_submit();
         }
+        break;
+    case 'logout':
+        handle_logout();
+        break;
+    case 'revoke':
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            oauth_error('invalid_request', 'POST erforderlich.', 405);
+        }
+        handle_revoke();
         break;
     default:
         oauth_error('invalid_request', 'Unbekannter Endpunkt.', 404);
