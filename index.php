@@ -118,6 +118,42 @@ function client_from_request(): ?array
 }
 
 
+function persist_authorize_params(): string
+{
+    // 1) Laufende Autorisierungssitzung bereits vorhanden
+    if (isset($_SESSION['oauth2'])) {
+        $o = $_SESSION['oauth2'];
+    } else {
+        // 2) Direktaufruf des Registrierungsformulars mit OAuth-Parametern:
+        //    Parameter aus dem GET-Request übernehmen und in der
+        //    Session ablegen, damit sie den Registrierungs-POST überleben.
+        $responseType = $_GET['response_type'] ?? '';
+        $clientId     = $_GET['client_id'] ?? '';
+        if ($responseType !== 'code' || $clientId === '') {
+            return '';
+        }
+        $o = $_SESSION['oauth2'] = [
+            'client_id'         => $clientId,
+            'redirect_uri'      => $_GET['redirect_uri'] ?? '',
+            'scope'             => trim($_GET['scope'] ?? ''),
+            'state'             => $_GET['state'] ?? '',
+            'code_challenge'    => $_GET['code_challenge'] ?? '',
+            'challenge_method'  => strtoupper($_GET['code_challenge_method'] ?? ''),
+        ];
+    }
+
+    return http_build_query([
+        'response_type'         => 'code',
+        'client_id'             => $o['client_id'],
+        'redirect_uri'          => $o['redirect_uri'],
+        'scope'                 => $o['scope'],
+        'state'                 => $o['state'],
+        'code_challenge'        => $o['code_challenge'],
+        'code_challenge_method' => $o['challenge_method'],
+    ]);
+}
+
+
 /* ---------------------------------------------------------
  * Token-Ausstellung
  * --------------------------------------------------------- */
@@ -534,19 +570,8 @@ function handle_register_request(): void
 {
     // Autorisierungsparameter (falls vorhanden) mitnehmen, damit der
     // Nutzer nach der Registrierung zum ursprünglichen Login zurückkehren kann
-    $authorizeQuery = '';
-    if (isset($_SESSION['oauth2'])) {
-        $authorizeQuery = http_build_query([
-            'response_type'         => 'code',
-            'client_id'             => $_SESSION['oauth2']['client_id'],
-            'redirect_uri'          => $_SESSION['oauth2']['redirect_uri'],
-            'scope'                 => $_SESSION['oauth2']['scope'],
-            'state'                 => $_SESSION['oauth2']['state'],
-            'code_challenge'        => $_SESSION['oauth2']['code_challenge'],
-            'code_challenge_method' => $_SESSION['oauth2']['challenge_method'],
-        ]);
-    }
-
+    $authorizeQuery = persist_authorize_params();
+    
     $registerError = '';   // validiert das Template als eingebunden
     $registerOld    = ['username' => '', 'authorize_query' => $authorizeQuery];
     include 'php' . DS . 'inc' . DS . 'register-form.inc.php';
@@ -565,19 +590,8 @@ function handle_register_submit(): void
     $password           = $_POST['password'] ?? '';
     $passwordConfirm    = $_POST['password_confirm'] ?? '';
 
-    $authorizeQuery = '';
-    if (isset($_SESSION['oauth2'])) {
-        $authorizeQuery = http_build_query([
-            'response_type'         => 'code',
-            'client_id'             => $_SESSION['oauth2']['client_id'],
-            'redirect_uri'          => $_SESSION['oauth2']['redirect_uri'],
-            'scope'                 => $_SESSION['oauth2']['scope'],
-            'state'                 => $_SESSION['oauth2']['state'],
-            'code_challenge'        => $_SESSION['oauth2']['code_challenge'],
-            'code_challenge_method' => $_SESSION['oauth2']['challenge_method'],
-        ]);
-    }
-
+    $authorizeQuery = persist_authorize_params();
+    
     // Validierung
     $error = '';
     if ($username === '' || mb_strlen($username) < 3 || mb_strlen($username) > 64) {
