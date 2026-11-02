@@ -1,1 +1,18 @@
-
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[HY000] [2002] No such file or directory in /home/harald/public_html/app/oauth2-server/php/inc/database.inc.php:21
+Stack trace:
+#0 /home/harald/public_html/app/oauth2-server/php/inc/database.inc.php(21): PDO->__construct()
+#1 /home/harald/public_html/app/oauth2-server/php/cleanup.php(27): db()
+#2 {main}
+  thrown in /home/harald/public_html/app/oauth2-server/php/inc/database.inc.php on line 21
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[HY000] [2002] No such file or directory in /home/harald/public_html/app/oauth2-server/php/inc/database.inc.php:21
+Stack trace:
+#0 /home/harald/public_html/app/oauth2-server/php/inc/database.inc.php(21): PDO->__construct()
+#1 /home/harald/public_html/app/oauth2-server/php/cleanup.php(27): db()
+#2 {main}
+  thrown in /home/harald/public_html/app/oauth2-server/php/inc/database.inc.php on line 21
+PHP Fatal error:  Uncaught PDOException: SQLSTATE[HY000] [2002] No such file or directory in /home/harald/public_html/app/oauth2-server/php/inc/database.inc.php:21
+Stack trace:
+#0 /home/harald/public_html/app/oauth2-server/php/inc/database.inc.php(21): PDO->__construct()
+#1 /home/harald/public_html/app/oauth2-server/php/cleanup.php(27): db()
+#2 {main}
+  thrown in /home/harald/public_html/app/oauth2-server/php/inc/database.inc.php on line 21

@@ -165,6 +165,41 @@ function issue_tokens(string $clientId, ?int $userId, string $scope): array
 }
 
 
+/* ---------------------------------------------------------
+ * Rollen & Scopes
+ * --------------------------------------------------------- */
+const ROLE_RANK = ['guest' => 0, 'user' => 1, 'admin' => 2];
+const ROLE_SCOPE_MAP = [
+    'guest' => ['profile'], // Basis-Scope, den jeder hat
+    'user'  => ['profile', 'read', 'write'],
+    'admin' => ['profile', 'read', 'write', 'admin'],
+];
+
+
+/**
+ * Prueft angeforderte Scopes gegen Client-Freigabe und Benutzerrolle.
+ * Gibt die genehmigten Scopes zurueck oder bricht mit oauth_error ab.
+ */
+function resolve_scopes(string $requested, string $role, string $clientAllowedScopes): string
+{
+    $requestedSet = $requested === '' ? ['profile'] : preg_split('/\s+/', trim($requested));
+    $clientSet    = preg_split('/\s+/', trim($clientAllowedScopes));
+    $roleSet      = ROLE_SCOPE_MAP[$role] ?? ['profile'];
+
+    $granted = array_values(array_intersect($requestedSet, $clientSet, $roleSet));
+
+    $denied = array_diff($requestedSet, $granted);
+    if ($denied !== []) {
+        oauth_error(
+            'invalid_scope',
+            'Folgende Scopes sind für Ihre Rolle nicht erlaubt: '
+                . htmlspecialchars(implode(' ', $denied))
+        );
+    }
+    return implode(' ', $granted);
+}
+
+
 /* =========================================================
  * GET /authorize
  * ========================================================= */
@@ -270,6 +305,13 @@ function handle_authorize_submit(): void
         echo '<p>Ungültige Zugangsdaten. <a href="javascript:history.back()">Zurück</a></p>';
         exit;
     }
+    
+    // Scope gegen Rolle des Benutzers und Client-Freigabe prüfen
+    $stmt = db()->prepare('SELECT redirect_uri, allowed_scopes FROM oauth_clients WHERE client_id = ?');
+    $stmt->execute([$sess['client_id']]);
+    $client = $stmt->fetch();
+
+    $grantedScope = resolve_scopes($sess['scope'], $user['role'], $client['allowed_scopes']);
 
     // Authorization Code erzeugen
     $code = random_token();
@@ -281,7 +323,7 @@ function handle_authorize_submit(): void
     $stmt->execute(
         [
             hash_token($code), $sess['client_id'], $user['id'],
-            $sess['redirect_uri'], $sess['scope'],
+            $sess['redirect_uri'], $grantedScope,            
             $sess['code_challenge'] ?: null, $sess['challenge_method'] ?: null,
             $globConfig['TTL']['CODE'],
         ]
@@ -464,11 +506,22 @@ function handle_introspect(): void
         || new DateTimeImmutable($tok['expires_at']) < new DateTimeImmutable()) {
         json_response(['active' => false]);
     }
+    
+    // Rolle des Token-Besitzers nachladen
+    $role = null;
+    if ($tok['user_id'] !== null) {
+        $stmt = db()->prepare('SELECT role FROM oauth_users WHERE id = ?');
+        $stmt->execute([$tok['user_id']]);
+        $u = $stmt->fetch();
+        $role = $u['role'] ?? null;
+    }
+
     json_response([
         'active'    => true,
         'scope'     => $tok['scope'],
         'client_id' => $tok['client_id'],
         'user_id'   => $tok['user_id'],
+        'role'      => $role,
         'exp'       => (new DateTimeImmutable($tok['expires_at']))->getTimestamp(),
     ]);
 }
@@ -574,6 +627,52 @@ function handle_register_submit(): void
 
 
 /* =========================================================
+ * GET /userinfo - Benutzerdaten für Client (RFC 6750)
+ * ========================================================= */
+function handle_userinfo(): void
+{
+    // Bearer Token aus Authorization-Header holen
+    $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+    if (!preg_match('/^Bearer\s+(\S+)$/i', $authHeader, $m)) {
+        header('WWW-Authenticate: Bearer realm="oauth"');
+        oauth_error('invalid_request', 'Bearer Token erforderlich.', 401);
+    }
+
+    $stmt = db()->prepare('SELECT * FROM oauth_access_tokens WHERE token = ?');
+    $stmt->execute([hash_token($m[1])]);
+    $tok = $stmt->fetch();
+
+    if (!$tok || (int)$tok['revoked'] === 1
+        || new DateTimeImmutable($tok['expires_at']) < new DateTimeImmutable()) {
+        header('WWW-Authenticate: Bearer realm="oauth", error="invalid_token"');
+        oauth_error('invalid_token', 'Token ungültig oder abgelaufen.', 401);
+    }
+
+    // Token-Inhaber ermitteln
+    if ($tok['user_id'] === null) {
+        // client_credentials: Token gehört dem Client selbst
+        json_response([
+            'client_id' => $tok['client_id'],
+            'sub'        => 'client:' . $tok['client_id'],
+        ]);
+    }
+
+    $stmt = db()->prepare('SELECT id, username, role FROM oauth_users WHERE id = ?');
+    $stmt->execute([$tok['user_id']]);
+    $user = $stmt->fetch();
+    if (!$user) {
+        oauth_error('invalid_token', 'Benutzer nicht gefunden.', 401);
+    }
+
+    json_response([
+        'sub'      => (string)$user['id'],   // stable ID (kein Username!)
+        'username' => $user['username'],
+        'role'     => $user['role'],          // aus der Rollen-Erweiterung
+    ]);
+}
+
+
+/* =========================================================
  * Routing
  * ========================================================= */
 $action = $_GET['action'] ?? 'authorize';
@@ -607,6 +706,12 @@ switch ($action) {
             oauth_error('invalid_request', 'POST erforderlich.', 405);
         }
         handle_revoke();
+        break;
+    case 'userinfo':
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'GET') {
+            oauth_error('invalid_request', 'GET erforderlich.', 405);
+        }
+        handle_userinfo();
         break;
     default:
         oauth_error('invalid_request', 'Unbekannter Endpunkt.', 404);
